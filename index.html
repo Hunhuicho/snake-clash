@@ -40,6 +40,11 @@
   #finalBoard .frow { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 10px; background: rgba(255,255,255,.04); font-weight: 700; color: #cdd8f0; font-size: 15px; }
   #finalBoard .frow.me { background: rgba(98,255,176,.14); color: #eafff5; box-shadow: inset 0 0 0 1px rgba(98,255,176,.45); }
   #finalBoard .frow.gap { background: none; color: #5a688c; padding: 2px 12px; justify-content: center; font-size: 14px; }
+  #finalBoard .frow.dead { opacity: .55; }
+  #finalBoard .frow .rt { display: flex; align-items: center; gap: 10px; flex: none; }
+  #finalBoard .frow .tag { font-size: 11px; font-weight: 700; color: #ff8aa3; background: rgba(255,90,120,.16); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  #finalBoard .frow .tag.alive { color: #62ffb0; background: rgba(98,255,176,.16); }
+  #finalBoard .frow .len { min-width: 34px; text-align: right; }
   #finalBoard .frow .nm { display: flex; align-items: center; gap: 10px; overflow: hidden; }
   #finalBoard .frow .pos { width: 30px; text-align: left; color: #8fa0c4; font-weight: 900; flex: none; font-size: 15px; }
   #finalBoard .frow.me .pos { color: #62ffb0; }
@@ -101,7 +106,7 @@
   <div class="title">SNAKE CLASH</div>
   <div class="subtitle">배틀로얄! <b>부활 없음</b> — 끝까지 살아남는 <b>1명</b>이 승리합니다. 길이 <b>250</b> 도달 시 즉시 승리, 제한시간 <b>5분</b>이 끝나면 <b>1등</b>이 승리. 먹이는 클수록 점수가 높아요(1·2·3점). 상대 머리를 내 몸으로 막으면 처치, 내 머리가 상대 몸에 닿으면 끝.</div>
   <button class="btn" id="startBtn">PLAY</button>
-  <div class="hint">조준: 마우스 / 터치 · 부스트: 클릭·스페이스 (길이 소모)</div>
+  <div class="hint">조준: 마우스 / 터치 · 부스트: 클릭·스페이스 · 태블릿은 더블탭으로 부스트 켜고/한 번 탭으로 끄기 (길이 소모)</div>
 </div>
 
 <div class="overlay hidden" id="overScreen">
@@ -586,9 +591,10 @@ function finishRound(outcome){
 
   const medal = i => i===1 ? '🥇' : i===2 ? '🥈' : i===3 ? '🥉' : '#'+i;
   const rowHtml = (s, pos) =>
-    `<div class="frow ${s.isPlayer?'me':''}"><span class="nm"><span class="pos">${medal(pos)}</span>`
+    `<div class="frow ${s.isPlayer?'me':''} ${s.dead?'dead':''}"><span class="nm"><span class="pos">${medal(pos)}</span>`
     + `<span class="dot" style="background:${s.col}"></span><span class="label">${s.name}</span></span>`
-    + `<span>${Math.floor(s.len)}</span></div>`;
+    + `<span class="rt">${s.dead?'<span class="tag">💀 탈락</span>':'<span class="tag alive">🟢 생존</span>'}`
+    + `<span class="len">${Math.floor(s.len)}</span></span></div>`;
   let rows = '<div class="fhead">Final Standings</div>';
   const TOP = 8;
   standings.slice(0, TOP).forEach((s,i)=> rows += rowHtml(s, i+1));
@@ -608,9 +614,19 @@ function setAim(clientX, clientY){
 cv.addEventListener('mousemove', e=> setAim(e.clientX, e.clientY));
 cv.addEventListener('mousedown', e=>{ input.boost = true; setAim(e.clientX,e.clientY); });
 window.addEventListener('mouseup', ()=> input.boost = false);
-cv.addEventListener('touchstart', e=>{ const t=e.touches[0]; setAim(t.clientX,t.clientY); input.boost=true; e.preventDefault(); }, {passive:false});
+// Touch: double-tap toggles boost ON (latched); a single tap turns it back to normal.
+let lastTapT = -9999;
+const DOUBLE_TAP_MS = 300;
+cv.addEventListener('touchstart', e=>{
+  const t = e.touches[0]; setAim(t.clientX, t.clientY);
+  const now = performance.now();
+  if(now - lastTapT < DOUBLE_TAP_MS){ input.boost = true; }   // double-tap → boost ON
+  else { input.boost = false; }                               // single tap → normal
+  lastTapT = now;
+  e.preventDefault();
+}, {passive:false});
 cv.addEventListener('touchmove', e=>{ const t=e.touches[0]; setAim(t.clientX,t.clientY); e.preventDefault(); }, {passive:false});
-window.addEventListener('touchend', ()=> input.boost=false);
+// touchend does NOT clear boost — it stays latched until the next single tap.
 window.addEventListener('keydown', e=>{ if(e.code==='Space'){ input.boost=true; e.preventDefault(); } });
 window.addEventListener('keyup', e=>{ if(e.code==='Space') input.boost=false; });
 
