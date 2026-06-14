@@ -252,7 +252,9 @@ function updateSnake(s){
     sp *= 1.9; s.boostT--;
     s._boostDrain = (s._boostDrain||0) + 1;
     if(s._boostDrain >= 6){ s._boostDrain = 0; s.len = Math.max(10, s.len-1);
-      spawnFood(s.x - Math.cos(s.ang)*14, s.y - Math.sin(s.ang)*14, 4, s.col, true); }
+      // drop the shed mass at the tail so the head can't immediately re-eat it
+      const tail = s.path[s.path.length-1] || s;
+      spawnFood(tail.x + rand(-5,5), tail.y + rand(-5,5), 4, s.col, true); }
   }
   s.x += Math.cos(s.ang)*sp;
   s.y += Math.sin(s.ang)*sp;
