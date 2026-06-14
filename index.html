@@ -143,6 +143,7 @@ let running = false;
 let bestRank = 99;
 let timeLeft = ROUND_SECONDS;
 let lastFrame = 0;
+let killCount = 0;   // increments each elimination → later death = better placement
 
 const input = { x: 0, y: 0, boost: false }; // aim in screen space relative to center
 
@@ -193,6 +194,7 @@ function reset(){
   snakes.push(player);
   for(let i=0;i<BOT_COUNT;i++) snakes.push(makeSnake(false, i));
   bestRank = 99;
+  killCount = 0;
 }
 
 // ---- Update ----
@@ -285,6 +287,7 @@ function updateSnake(s){
 function killSnake(s){
   if(s.dead) return;
   s.dead = true;
+  s.deathOrder = ++killCount;   // record elimination order for final placement
   // scatter mass as food
   const step = Math.max(1, Math.floor(s.path.length / Math.min(s.path.length, 40)));
   for(let i=0;i<s.path.length;i+=step){
@@ -570,8 +573,13 @@ function finishRound(outcome){
   overTitle.style.backgroundClip = 'border-box';
   overTitle.style.color = color;
   overTitle.style.webkitTextFillColor = color;
-  // final standings (rank every snake by length, mark the player)
-  const standings = [...snakes].sort((a,b)=> b.len - a.len);
+  // final standings (battle royale): survivors rank above the eliminated.
+  // alive → by length; eliminated → later death = higher placement.
+  const standings = [...snakes].sort((a,b)=>{
+    if(a.dead !== b.dead) return a.dead ? 1 : -1;
+    if(!a.dead) return b.len - a.len;
+    return (b.deathOrder||0) - (a.deathOrder||0);
+  });
   const myPos = standings.indexOf(player) + 1;
   document.getElementById('finalLen').textContent = 'Length ' + Math.floor(player.len);
   document.getElementById('finalRank').textContent = msg + ' · 최종 순위 #' + myPos + ' / ' + standings.length;
