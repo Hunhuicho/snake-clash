@@ -99,7 +99,7 @@
 
 <div class="overlay" id="startScreen">
   <div class="title">SNAKE CLASH</div>
-  <div class="subtitle">제한시간 <b>2분</b> 안에 길이 <b>250</b>에 도달하면 즉시 승리! 시간이 끝났을 때 <b>1등</b>이어도 승리합니다. 상대 머리를 내 몸으로 막으면 처치, 내 머리가 상대 몸에 닿으면 끝.</div>
+  <div class="subtitle">배틀로얄! <b>부활 없음</b> — 끝까지 살아남는 <b>1명</b>이 승리합니다. 길이 <b>250</b> 도달 시 즉시 승리, 제한시간 <b>5분</b>이 끝나면 <b>1등</b>이 승리. 먹이는 클수록 점수가 높아요(1·2·3점). 상대 머리를 내 몸으로 막으면 처치, 내 머리가 상대 몸에 닿으면 끝.</div>
   <button class="btn" id="startBtn">PLAY</button>
   <div class="hint">조준: 마우스 / 터치 · 부스트: 클릭·스페이스 (길이 소모)</div>
 </div>
@@ -126,10 +126,10 @@ function resize(){
 window.addEventListener('resize', resize); resize();
 
 // ---- World ----
-const WORLD = 4200;          // world radius
-const FOOD_COUNT = 700;
+const WORLD = 2400;          // world radius (smaller = more dynamic encounters)
+const FOOD_COUNT = 340;
 const BOT_COUNT = 9;
-const ROUND_SECONDS = 120;   // round time limit
+const ROUND_SECONDS = 300;   // round time limit (5 minutes)
 const WIN_LENGTH = 250;      // reach this length for an instant win
 const SEG_SPACING = 5.2;     // distance between recorded path samples used for body
 const NAMES = ['Viper','Kuro','Nyx','Echo','Blitz','Fang','Coil','Zephyr','Onyx','Rex','Mamba','Sly','Glide','Hiss'];
@@ -150,7 +150,14 @@ function rand(a,b){ return a + Math.random()*(b-a); }
 function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
 
 function spawnFood(x,y,r,col,fromDeath){
-  foods.push({ x, y, r: r||rand(4,6), col: col||COLORS[(Math.random()*COLORS.length)|0], v: fromDeath?1:0 });
+  if(r==null){                       // field food: random tier (size = score)
+    const t = Math.random();
+    if(t < 0.08) r = rand(10,12);    // tier 3 (rare, big)
+    else if(t < 0.30) r = rand(7,8.5); // tier 2
+    else r = rand(4,5.5);            // tier 1 (common, small)
+  }
+  const val = r>=9 ? 3 : r>=6.5 ? 2 : 1;
+  foods.push({ x, y, r, val, col: col||COLORS[(Math.random()*COLORS.length)|0], v: fromDeath?1:0 });
 }
 function randomWorldPoint(){
   const a = Math.random()*Math.PI*2, d = Math.sqrt(Math.random())*(WORLD-60);
@@ -269,7 +276,7 @@ function updateSnake(s){
   for(let i=foods.length-1;i>=0;i--){
     const f = foods[i];
     if(dist2(s.x,s.y,f.x,f.y) < (r+f.r)*(r+f.r)){
-      s.len += 1; foods.splice(i,1);
+      s.len += f.val; foods.splice(i,1);
       if(!f.v){ const p = randomWorldPoint(); spawnFood(p.x,p.y); } // keep field stocked
     }
   }
@@ -284,14 +291,8 @@ function killSnake(s){
     const n = s.path[i];
     spawnFood(n.x + rand(-6,6), n.y + rand(-6,6), rand(5,8), s.col, true);
   }
+  // battle royale: no respawns — a dead snake stays out for the round
   if(s.isPlayer){ finishRound('dead'); }
-  else {
-    // respawn a fresh bot after a beat
-    setTimeout(()=>{
-      const idx = snakes.indexOf(s);
-      if(idx>=0) snakes[idx] = makeSnake(false, (Math.random()*COLORS.length)|0);
-    }, 1500);
-  }
 }
 
 function collisions(){
@@ -368,6 +369,10 @@ function draw(){
     if(sx<-20||sx>W+20||sy<-20||sy>H+20) continue;
     ctx.beginPath(); ctx.fillStyle = f.col; ctx.globalAlpha = .9;
     ctx.arc(sx, sy, f.r, 0, Math.PI*2); ctx.fill();
+    if(f.val>=2){ // bright core marks higher-value food
+      ctx.globalAlpha = .9; ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.beginPath(); ctx.arc(sx, sy, f.r*0.4, 0, Math.PI*2); ctx.fill();
+    }
   }
   ctx.globalAlpha = 1;
 
@@ -529,7 +534,9 @@ function loop(ts){
   updateHUD();
   updateTimer();
 
+  const aliveCount = snakes.reduce((n,s)=> n + (s.dead?0:1), 0);
   if(running && player.len >= WIN_LENGTH){ finishRound('win'); }
+  else if(running && !player.dead && aliveCount <= 1){ finishRound('win'); } // last snake standing
   else if(running && timeLeft <= 0){ timeLeft = 0; updateTimer(); finishRound(player.rank===1 ? 'win' : 'timeup'); }
 
   requestAnimationFrame(loop);
