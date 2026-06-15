@@ -107,15 +107,15 @@
 <div id="hud">
   <div class="len"><span id="lenVal">0</span> <small>LENGTH</small></div>
   <div class="rank" id="rankVal">#- of -</div>
-  <div class="goal">목표 길이 <span id="goalVal">250</span></div>
+  <div class="goal">🏆 최후의 1인 또는 5분 후 1등</div>
 </div>
 <div id="timer"><div class="t" id="timeVal">5:00</div><small>TIME</small></div>
 <div id="leaderboard"><h3>Leaderboard</h3><div id="lbRows"></div></div>
-<div id="boost">마우스 / 손가락으로 조준 · <b>클릭·스페이스</b>로 부스트</div>
+<div id="boost">마우스 / 손가락으로 조준 · <b>클릭·스페이스</b>로 부스트 · 태블릿 <b>더블탭</b>으로 부스트</div>
 
 <div class="overlay" id="startScreen">
   <div class="title">SNAKE CLASH</div>
-  <div class="subtitle">배틀로얄! <b>부활 없음</b> — 끝까지 살아남는 <b>1명</b>이 승리합니다. 길이 <b>250</b> 도달 시 즉시 승리, 제한시간 <b>5분</b>이 끝나면 <b>1등</b>이 승리. 먹이는 클수록 점수가 높아요(1·2·3점). 상대 머리를 내 몸으로 막으면 처치, 내 머리가 상대 몸에 닿으면 끝.</div>
+  <div class="subtitle">배틀로얄! <b>부활 없음</b> — 끝까지 살아남는 <b>1명</b>이 승리! 모두 쓰러지지 않으면 제한시간 <b>5분</b>이 끝났을 때 <b>1등</b>이 승리합니다. 먹이는 클수록 점수가 높아요(1·2·3점). 상대 머리를 내 몸으로 막으면 처치, 내 머리가 상대 몸에 닿으면 끝.</div>
   <div class="diffWrap">
     <div class="diffLabel">난이도 선택</div>
     <div class="diffBtns" id="diffBtns">
@@ -157,7 +157,6 @@ const WORLD = 2400;          // world radius (smaller = more dynamic encounters)
 const FOOD_COUNT = 340;
 const BOT_COUNT = 9;
 const ROUND_SECONDS = 300;   // round time limit (5 minutes)
-const WIN_LENGTH = 250;      // reach this length for an instant win
 const SEG_SPACING = 5.2;     // distance between recorded path samples used for body
 const NAMES = ['Viper','Kuro','Nyx','Echo','Blitz','Fang','Coil','Zephyr','Onyx','Rex','Mamba','Sly','Glide','Hiss'];
 // player uses #62ffb0; keep it out of the bot pool so colors stay distinguishable
@@ -635,6 +634,19 @@ function updateTimer(){
   timerEl.classList.toggle('warn', t<=10);
 }
 
+// ---- Boost indicator ----
+const boostEl = document.getElementById('boost');
+const BOOST_HINT_DEFAULT = '마우스 / 손가락으로 조준 · <b>클릭·스페이스</b>로 부스트 · 태블릿 <b>더블탭</b>으로 부스트';
+function updateBoostHint(){
+  if(input.boost){
+    boostEl.innerHTML = '⚡ <b>부스트 ON</b> — 화면을 한 번 탭(또는 드래그)하면 해제';
+    boostEl.style.color = '#62ffb0';
+  } else {
+    boostEl.innerHTML = BOOST_HINT_DEFAULT;
+    boostEl.style.color = '#7f8db0';
+  }
+}
+
 // ---- Loop ----
 function loop(ts){
   if(!running) return;
@@ -647,10 +659,11 @@ function loop(ts){
   draw();
   updateHUD();
   updateTimer();
+  updateBoostHint();
 
   const aliveCount = snakes.reduce((n,s)=> n + (s.dead?0:1), 0);
-  if(running && player.len >= WIN_LENGTH){ finishRound('win'); }
-  else if(running && !player.dead && aliveCount <= 1){ finishRound('win'); } // last snake standing
+  // Win conditions: be the last snake standing, or rank #1 when the 5-minute timer ends.
+  if(running && !player.dead && aliveCount <= 1){ finishRound('win'); } // last snake standing
   else if(running && timeLeft <= 0){ timeLeft = 0; updateTimer(); finishRound(player.rank===1 ? 'win' : 'timeup'); }
 
   requestAnimationFrame(loop);
@@ -710,7 +723,16 @@ function finishRound(outcome){
   setTimeout(()=> overScreen.classList.remove('hidden'), 400);
 }
 document.getElementById('startBtn').onclick = startGame;
-document.getElementById('retryBtn').onclick = startGame;
+// Retry returns to the start screen so the player can re-pick difficulty before playing again.
+document.getElementById('retryBtn').onclick = backToMenu;
+function backToMenu(){
+  running = false;
+  input.boost = false;
+  overScreen.classList.add('hidden');
+  startScreen.classList.remove('hidden');
+  reset();          // fresh world for the idle background
+  startIdle();      // resume the menu background animation
+}
 
 // ---- Difficulty selector ----
 const diffBtns = document.getElementById('diffBtns');
@@ -734,25 +756,50 @@ function setAim(clientX, clientY){
 cv.addEventListener('mousemove', e=> setAim(e.clientX, e.clientY));
 cv.addEventListener('mousedown', e=>{ input.boost = true; setAim(e.clientX,e.clientY); });
 window.addEventListener('mouseup', ()=> input.boost = false);
-// Touch: double-tap toggles boost ON (latched); a single tap turns it back to normal.
-let lastTapT = -9999;
-const DOUBLE_TAP_MS = 300;
+// Touch boost: a deliberate DOUBLE-TAP IN THE SAME SPOT turns boost ON (latched).
+// Any normal steering action — a tap somewhere new, or dragging — turns it OFF,
+// so it can never get stuck on. (Two quick taps far apart = steering, not a double-tap.)
+let lastTapT = -9999, lastTapX = 0, lastTapY = 0, tStartX = 0, tStartY = 0;
+const DTAP_MS = 320, DTAP_DIST = 48, DRAG_OFF = 24;
 cv.addEventListener('touchstart', e=>{
-  const t = e.touches[0]; setAim(t.clientX, t.clientY);
+  const t = e.touches[0];
+  tStartX = t.clientX; tStartY = t.clientY;
+  setAim(t.clientX, t.clientY);
   const now = performance.now();
-  if(now - lastTapT < DOUBLE_TAP_MS){ input.boost = true; }   // double-tap → boost ON
-  else { input.boost = false; }                               // single tap → normal
-  lastTapT = now;
+  const near = Math.hypot(t.clientX - lastTapX, t.clientY - lastTapY) < DTAP_DIST;
+  if(now - lastTapT < DTAP_MS && near){
+    input.boost = true;        // double-tap (same spot) → boost ON
+    lastTapT = -9999;          // consume it; the next touch will turn boost off again
+  } else {
+    input.boost = false;       // single steering tap → normal
+    lastTapT = now;
+  }
+  lastTapX = t.clientX; lastTapY = t.clientY;
   e.preventDefault();
 }, {passive:false});
-cv.addEventListener('touchmove', e=>{ const t=e.touches[0]; setAim(t.clientX,t.clientY); e.preventDefault(); }, {passive:false});
-// touchend does NOT clear boost — it stays latched until the next single tap.
+cv.addEventListener('touchmove', e=>{
+  const t = e.touches[0];
+  setAim(t.clientX, t.clientY);
+  // dragging to steer = actively maneuvering → cancel any latched boost
+  if(Math.hypot(t.clientX - tStartX, t.clientY - tStartY) > DRAG_OFF) input.boost = false;
+  e.preventDefault();
+}, {passive:false});
+// touchend leaves boost as-is (latched if double-tapped, off otherwise).
 window.addEventListener('keydown', e=>{ if(e.code==='Space'){ input.boost=true; e.preventDefault(); } });
 window.addEventListener('keyup', e=>{ if(e.code==='Space') input.boost=false; });
 
-// idle background draw before start
+// idle background draw before start (restartable when returning to the menu)
+let idleRunning = false;
+function startIdle(){
+  if(idleRunning) return;
+  idleRunning = true;
+  (function idle(){
+    if(running){ idleRunning = false; return; }
+    draw(); requestAnimationFrame(idle);
+  })();
+}
 reset();
-(function idle(){ if(!running){ draw(); requestAnimationFrame(idle); } })();
+startIdle();
 </script>
 </body>
 </html>
