@@ -87,6 +87,11 @@
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 5;
     color: #7f8db0; font-size: 12px; pointer-events: none; text-align: center;
   }
+  #ver {
+    position: fixed; left: 10px; bottom: 8px; z-index: 20; pointer-events: none;
+    color: #5a688c; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+    font-family: ui-monospace, Consolas, monospace; opacity: .8;
+  }
 
   #timer {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
@@ -112,6 +117,7 @@
 <div id="timer"><div class="t" id="timeVal">5:00</div><small>TIME</small></div>
 <div id="leaderboard"><h3>Leaderboard</h3><div id="lbRows"></div></div>
 <div id="boost">마우스 / 손가락으로 조준 · <b>클릭·스페이스</b>로 부스트 · 태블릿 <b>더블탭</b>으로 부스트</div>
+<div id="ver"></div>
 
 <div class="overlay" id="startScreen">
   <div class="title">SNAKE CLASH</div>
@@ -140,6 +146,15 @@
 </div>
 
 <script>
+// Bump this on every deploy so the live build is easy to verify.
+const VERSION = 'v1.1.0';
+const BUILD_DATE = '2026-06-15';
+window.SNAKE_VERSION = VERSION;
+{
+  const verEl = document.getElementById('ver');
+  if(verEl) verEl.textContent = 'Snake Clash ' + VERSION + ' · ' + BUILD_DATE;
+}
+
 const cv = document.getElementById('game');
 const ctx = cv.getContext('2d');
 let W, H, DPR;
