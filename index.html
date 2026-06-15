@@ -147,8 +147,8 @@
 
 <script>
 // Bump this on every deploy so the live build is easy to verify.
-const VERSION = 'v1.1.0';
-const BUILD_DATE = '2026-06-15';
+const VERSION = 'v1.1.1';
+const BUILD_DATE = '2026-06-16';
 window.SNAKE_VERSION = VERSION;
 {
   const verEl = document.getElementById('ver');
@@ -468,12 +468,15 @@ function collisions(){
 
 // ---- Camera / Render ----
 let cam = {x:0,y:0};
+let renderDt = 1/60;   // seconds since last rendered frame (set by loop)
 function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle = '#0a0e1a'; ctx.fillRect(0,0,W,H);
 
-  cam.x += (player.x - cam.x)*0.12;
-  cam.y += (player.y - cam.y)*0.12;
+  // frame-rate-independent camera smoothing (0.12 per 1/60s, scaled to the real frame time)
+  const k = 1 - Math.pow(1 - 0.12, renderDt * 60);
+  cam.x += (player.x - cam.x)*k;
+  cam.y += (player.y - cam.y)*k;
   const ox = W/2 - cam.x, oy = H/2 - cam.y;
 
   // grid
@@ -663,14 +666,29 @@ function updateBoostHint(){
 }
 
 // ---- Loop ----
+// Fixed-timestep simulation: the game always advances at SIM_FPS steps/sec no matter
+// how fast the display refreshes (60/120/144Hz...). This keeps the snake speed identical
+// on every machine and removes the "everything suddenly speeds up" frame-rate glitch.
+const SIM_FPS = 60;
+const STEP = 1 / SIM_FPS;   // seconds per simulation step
+let acc = 0;                // accumulated real time waiting to be simulated
 function loop(ts){
   if(!running) return;
   if(!lastFrame) lastFrame = ts;
-  const dt = Math.min(0.1, (ts - lastFrame)/1000); lastFrame = ts;
-  timeLeft -= dt;
+  let frameDt = (ts - lastFrame) / 1000; lastFrame = ts;
+  if(frameDt > 0.25) frameDt = 0.25;   // clamp big stalls (tab switch) — no catch-up burst
+  renderDt = frameDt;                  // used for frame-rate-independent camera smoothing
+  acc += frameDt;
 
-  for(const s of snakes) updateSnake(s);
-  collisions();
+  let steps = 0;
+  while(running && acc >= STEP && steps < 5){
+    for(const s of snakes) updateSnake(s);
+    collisions();
+    timeLeft -= STEP;
+    acc -= STEP; steps++;
+  }
+  if(acc > STEP) acc = 0;   // fell behind (slow machine): drop backlog instead of spiraling
+
   draw();
   updateHUD();
   updateTimer();
