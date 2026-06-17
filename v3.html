@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Snake Clash — Predator (v2)</title>
+<title>Snake Clash — Online (v3)</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; }
@@ -43,6 +44,40 @@
   .diffBtns button:hover { border-color: rgba(120,150,230,.55); color: #eafff5; }
   .diffBtns button.sel { color: #06122a; background: linear-gradient(90deg,#ffd86b,#ff8a5c); border-color: transparent; box-shadow: 0 6px 22px rgba(255,150,80,.4); }
   .diffDesc { color: #9fb0d0; font-size: 13px; min-height: 18px; }
+  .modeTabs { display: flex; gap: 8px; margin: 0 0 22px; }
+  .modeTabs button {
+    font-size: 14px; font-weight: 800; color: #b9c6e6; cursor: pointer;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(120,150,230,.25);
+    border-radius: 12px; padding: 11px 18px; transition: all .12s ease;
+  }
+  .modeTabs button.sel { color: #06122a; background: linear-gradient(90deg,#4fd1ff,#62ffb0); border-color: transparent; box-shadow: 0 6px 22px rgba(80,220,200,.4); }
+  #multiPanel { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  #multiPanel.hidden, #singlePanel.hidden { display: none; }
+  .mfield {
+    font-size: 16px; font-weight: 700; color: #eafff5; text-align: center;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(120,150,230,.35);
+    border-radius: 12px; padding: 12px 16px; outline: none; width: 220px;
+  }
+  .mfield:focus { border-color: #62ffb0; }
+  .mfield.code { width: 120px; text-transform: uppercase; letter-spacing: 3px; }
+  .multiRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+  .multiRow .btn { font-size: 17px; padding: 12px 28px; }
+  .btn.alt { background: linear-gradient(90deg,#ffd86b,#ff8a5c); }
+  .orSep { color: #6f7fa3; font-size: 13px; font-weight: 700; }
+  .netStatus { color: #9fb0d0; font-size: 14px; min-height: 20px; max-width: 420px; line-height: 1.5; }
+  .netStatus b { color: #ffe14e; font-size: 20px; letter-spacing: 3px; }
+  #lobbyPanel { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  #lobbyPanel.hidden { display: none; }
+  .lobbyHead { color: #9fb0d0; font-size: 15px; font-weight: 700; }
+  .lobbyHead b { color: #ffe14e; font-size: 22px; letter-spacing: 3px; }
+  .lobbyList { display: flex; flex-direction: column; gap: 7px; min-width: 250px; }
+  .lobbyList .pl { display: flex; align-items: center; background: rgba(255,255,255,.05); border: 1px solid rgba(120,150,230,.22); border-radius: 10px; padding: 10px 15px; font-weight: 700; color: #cdd8f0; font-size: 15px; }
+  .lobbyList .pl .crown { color: #ffd86b; }
+  .lobbyList .pl .me { color: #62ffb0; font-size: 13px; }
+  .lobbyHint { color: #9fb0d0; font-size: 13px; min-height: 18px; }
+  #lobbyStartBtn:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.5); }
+  .btnGhost { background: none; border: 1px solid rgba(120,150,230,.3); color: #9fb0d0; border-radius: 999px; padding: 8px 22px; font-weight: 700; cursor: pointer; font-size: 14px; }
+  .btnGhost:hover { border-color: rgba(120,150,230,.6); color: #eafff5; }
   .stat-final { margin: 14px 0 4px; font-size: clamp(18px,5vw,28px); font-weight: 800; color: #ffd86b; }
   .stat-sub { color: #9fb0d0; font-size: 14px; margin-bottom: 18px; }
 
@@ -94,6 +129,13 @@
     color: #5a688c; font-size: 11px; font-weight: 700; letter-spacing: .5px;
     font-family: ui-monospace, Consolas, monospace; opacity: .8;
   }
+  #spectateBanner {
+    position: fixed; left: 50%; top: 70px; transform: translateX(-50%); z-index: 8;
+    pointer-events: none; color: #ff8aa3; font-size: 15px; font-weight: 800;
+    background: rgba(8,12,24,.7); border: 1px solid rgba(255,90,120,.4);
+    padding: 8px 16px; border-radius: 999px; white-space: nowrap;
+  }
+  #spectateBanner.hidden { display: none; }
 
   #timer {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
@@ -120,12 +162,19 @@
 <div id="leaderboard"><h3>Leaderboard</h3><div id="lbRows"></div></div>
 <div id="boost">마우스 / 손가락으로 조준 · <b>클릭·스페이스</b>로 부스트 · 태블릿 <b>더블탭</b>으로 부스트</div>
 <div id="ver"></div>
+<div id="spectateBanner" class="hidden">💀 잡아먹힘 — 상대 생존 중, 관전 중…</div>
 
 <div class="overlay" id="startScreen">
   <div class="title">SNAKE CLASH</div>
-  <div class="subtitle"><b>포식자 모드!</b> 포인트가 <b>큰 뱀이 작은 뱀을 잡아먹습니다.</b> 내 머리로 상대 몸을 물면 그 지점부터 꼬리까지 베어먹어요 — 머리 쪽을 물수록 크게! 먹힌 뱀은 <b>길이 5 이상 남으면</b> 그 부분으로 살아남고, 그 미만이면 완전히 먹힙니다. 나보다 큰 뱀은 피하세요. 맵이 넓으니 계속 사냥하세요. 최후의 1인 또는 5분 후 1등이 승리!</div>
+  <div class="subtitle"><b>포식자 모드!</b> 포인트가 <b>큰 뱀이 작은 뱀을 잡아먹습니다.</b> 내 머리로 상대 몸을 물면 그 지점부터 꼬리까지 베어먹어요 — 머리 쪽을 물수록 크게! 먹힌 뱀은 <b>길이 5 이상 남으면</b> 그 부분으로 살아남고, 그 미만이면 완전히 먹힙니다. 나보다 큰 뱀은 피하세요.</div>
+
+  <div class="modeTabs" id="modeTabs">
+    <button data-mode="single" class="sel">🤖 싱글 (봇 대결)</button>
+    <button data-mode="multi">🌐 멀티 (온라인 2~4인)</button>
+  </div>
+
   <div class="diffWrap">
-    <div class="diffLabel">난이도 선택</div>
+    <div class="diffLabel">봇 난이도</div>
     <div class="diffBtns" id="diffBtns">
       <button data-lv="1">1 · 매우 쉬움</button>
       <button data-lv="2">2 · 쉬움</button>
@@ -135,7 +184,30 @@
     </div>
     <div class="diffDesc" id="diffDesc"></div>
   </div>
-  <button class="btn" id="startBtn">PLAY</button>
+
+  <div id="singlePanel">
+    <button class="btn" id="startBtn">PLAY</button>
+  </div>
+
+  <div id="multiPanel" class="hidden">
+    <input id="nameInput" class="mfield" maxlength="10" placeholder="플레이어 이름" autocomplete="off">
+    <div class="multiRow">
+      <button class="btn" id="createBtn">방 만들기</button>
+      <span class="orSep">또는</span>
+      <input id="codeInput" class="mfield code" maxlength="6" placeholder="방 코드" autocomplete="off">
+      <button class="btn alt" id="joinBtn">참가</button>
+    </div>
+    <div class="netStatus" id="netStatus">이름을 적고 방을 만들거나(방장), 친구의 방 코드로 참가하세요. (2~4인)</div>
+  </div>
+
+  <div id="lobbyPanel" class="hidden">
+    <div class="lobbyHead">대기실 · 방 코드 <b id="lobbyCode">----</b></div>
+    <div class="lobbyList" id="lobbyList"></div>
+    <button class="btn" id="lobbyStartBtn">게임 시작</button>
+    <div class="lobbyHint" id="lobbyHint"></div>
+    <button class="btnGhost" id="lobbyLeaveBtn">나가기</button>
+  </div>
+
   <div class="hint">조준: 마우스 / 터치 · 부스트: 클릭·스페이스 · 태블릿은 더블탭으로 부스트 켜고/한 번 탭으로 끄기 (길이 소모)</div>
 </div>
 
@@ -149,8 +221,8 @@
 
 <script>
 // Bump this on every deploy so the live build is easy to verify.
-const VERSION = 'v2.2.0';
-const VARIANT = 'Predator';
+const VERSION = 'v3.4.0';
+const VARIANT = 'Online';
 const BUILD_DATE = '2026-06-17';
 window.SNAKE_VERSION = VERSION + ' ' + VARIANT;
 {
@@ -191,6 +263,22 @@ let timeLeft = ROUND_SECONDS;
 let lastFrame = 0;
 let killCount = 0;   // increments each elimination → later death = better placement
 let difficulty = 3;  // 1..5, chosen on the start screen
+
+// ---- Multiplayer state (2–4 players, host-authoritative, lobby + room code) ----
+const MAX_PLAYERS = 4;    // host + up to 3 guests
+let netMode = 'single';   // 'single' | 'host' | 'guest'
+let cfgBots = BOT_COUNT;  // bot count for the current round (fewer in multiplayer)
+let cfgFood = FOOD_COUNT; // food count for the current round
+const net = {
+  peer: null,             // PeerJS peer
+  conn: null,             // guest: the single connection to the host
+  players: [],            // host: [{conn, name, pid, snake, input}] for each guest
+  started: false,         // host: has the round begun (locks the lobby)
+  nextPid: 1,             // host: monotonic player-id counter (no reuse → no collisions)
+  lastRoster: null,       // guest: last known lobby roster (to re-show on RETRY)
+  playing: false, roomCode: null, myPid: 0, isHost: false,
+  lastSnapshot: null, camSet: false, tick: 0,
+};
 
 // Per-difficulty bot AI tuning. Higher level = sharper, faster, more aggressive bots.
 const DIFF_DESC = {
@@ -265,10 +353,10 @@ function bodyCount(s){ return Math.floor(8 + s.len*0.9); }
 
 function reset(){
   foods = []; snakes = [];
-  for(let i=0;i<FOOD_COUNT;i++){ const p = randomWorldPoint(); spawnFood(p.x,p.y); }
+  for(let i=0;i<cfgFood;i++){ const p = randomWorldPoint(); spawnFood(p.x,p.y); }
   player = makeSnake(true, 0);
   snakes.push(player);
-  for(let i=0;i<BOT_COUNT;i++) snakes.push(makeSnake(false, i));
+  for(let i=0;i<cfgBots;i++) snakes.push(makeSnake(false, i));
   bestRank = 99;
   killCount = 0;
 }
@@ -387,6 +475,12 @@ function updateSnake(s){
     const desired = Math.atan2(input.y, input.x);
     if(input.x!==0 || input.y!==0) steer(s, desired);
     if(input.boost && s.len > 14){ s.boostT = 4; }
+  } else if(s.isRemote){
+    // host side: this snake is driven by a remote player's input
+    const ri = s._input || {x:0,y:0,boost:false};
+    const desired = Math.atan2(ri.y, ri.x);
+    if(ri.x!==0 || ri.y!==0) steer(s, desired, 0.16);
+    if(ri.boost && s.len > 14){ s.boostT = 4; }
   } else {
     botThink(s);
   }
@@ -430,7 +524,8 @@ function killSnake(s){
     spawnFood(n.x + rand(-6,6), n.y + rand(-6,6), rand(5,8), s.col, true);
   }
   // battle royale: no respawns — a dead snake stays out for the round
-  if(s.isPlayer){ finishRound('dead'); }
+  // In multiplayer the round ends via the host loop (when either human dies); single ends here.
+  if(s.isPlayer && netMode === 'single'){ finishRound('dead'); }
 }
 
 // Predator combat: the bigger snake EATS the smaller one. When a predator's head
@@ -489,15 +584,17 @@ function collisions(){
 let cam = {x:0,y:0};
 let renderDt = 1/60;   // seconds since last rendered frame (set by loop)
 let chompT = 0;        // drives the open/close mouth (chewing) animation
+let viewSnake = null;  // camera target override (used when spectating after death)
 function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle = '#0a0e1a'; ctx.fillRect(0,0,W,H);
   chompT += renderDt;
 
   // frame-rate-independent camera smoothing (0.12 per 1/60s, scaled to the real frame time)
+  const vt = viewSnake || player;
   const k = 1 - Math.pow(1 - 0.12, renderDt * 60);
-  cam.x += (player.x - cam.x)*k;
-  cam.y += (player.y - cam.y)*k;
+  cam.x += (vt.x - cam.x)*k;
+  cam.y += (vt.y - cam.y)*k;
   const ox = W/2 - cam.x, oy = H/2 - cam.y;
 
   // grid
@@ -759,6 +856,9 @@ const startScreen = document.getElementById('startScreen');
 const overScreen = document.getElementById('overScreen');
 const overTitle = document.getElementById('overTitle');
 function startGame(){
+  netMode = 'single';
+  cfgBots = BOT_COUNT; cfgFood = FOOD_COUNT;
+  viewSnake = null;
   reset();
   running = true;
   timeLeft = ROUND_SECONDS;
@@ -801,17 +901,22 @@ function finishRound(outcome){
   let rows = '<div class="fhead">Final Standings</div>';
   standings.forEach((s,i)=> rows += rowHtml(s, i+1));   // show every player
   document.getElementById('finalBoard').innerHTML = rows;
+  document.getElementById('retryBtn').textContent = 'RETRY';
 
   setTimeout(()=> overScreen.classList.remove('hidden'), 400);
 }
 document.getElementById('startBtn').onclick = startGame;
-// Retry returns to the start screen so the player can re-pick difficulty before playing again.
-document.getElementById('retryBtn').onclick = backToMenu;
+// Retry: single → start screen; multiplayer → back to the lobby (everyone stays connected).
+document.getElementById('retryBtn').onclick = ()=> onRetry();
 function backToMenu(){
   running = false;
   input.boost = false;
+  netCleanup();     // close any peer connection and return to single mode
+  if(typeof lobbyPanel!=='undefined' && lobbyPanel) lobbyPanel.classList.add('hidden');
+  if(typeof selectMode==='function') selectMode('single');   // reset start-screen panels
   overScreen.classList.add('hidden');
   startScreen.classList.remove('hidden');
+  cfgBots = BOT_COUNT; cfgFood = FOOD_COUNT;
   reset();          // fresh world for the idle background
   startIdle();      // resume the menu background animation
 }
@@ -869,6 +974,362 @@ cv.addEventListener('touchmove', e=>{
 // touchend leaves boost as-is (latched if double-tapped, off otherwise).
 window.addEventListener('keydown', e=>{ if(e.code==='Space'){ input.boost=true; e.preventDefault(); } });
 window.addEventListener('keyup', e=>{ if(e.code==='Space') input.boost=false; });
+
+// ===================== MULTIPLAYER (P2P via PeerJS, room code) =====================
+const modeTabs = document.getElementById('modeTabs');
+const singlePanel = document.getElementById('singlePanel');
+const multiPanel = document.getElementById('multiPanel');
+const nameInput = document.getElementById('nameInput');
+const codeInput = document.getElementById('codeInput');
+const netStatusEl = document.getElementById('netStatus');
+const lobbyPanel = document.getElementById('lobbyPanel');
+const lobbyCodeEl = document.getElementById('lobbyCode');
+const lobbyListEl = document.getElementById('lobbyList');
+const lobbyStartBtn = document.getElementById('lobbyStartBtn');
+const lobbyHintEl = document.getElementById('lobbyHint');
+const lobbyLeaveBtn = document.getElementById('lobbyLeaveBtn');
+let myName = 'YOU';
+
+const spectateBanner = document.getElementById('spectateBanner');
+function updateSpectate(on){ spectateBanner.classList.toggle('hidden', !on); }
+function setNetStatus(html){ netStatusEl.innerHTML = html; }
+function sanitizeName(v){ return (v||'').replace(/[<>]/g,'').trim().slice(0,10); }
+function genCode(){ const cs='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<4;i++) s+=cs[(Math.random()*cs.length)|0]; return s; }
+function peerIdFor(code){ return 'snakeclashv3-' + code; }
+
+function selectMode(mode){
+  [...modeTabs.children].forEach(b=> b.classList.toggle('sel', b.dataset.mode===mode));
+  singlePanel.classList.toggle('hidden', mode!=='single');
+  multiPanel.classList.toggle('hidden', mode!=='multi');
+}
+modeTabs.addEventListener('click', e=>{ const b=e.target.closest('button'); if(b) selectMode(b.dataset.mode); });
+selectMode('single');
+
+function netCleanup(){
+  try { if(net.conn) net.conn.close(); } catch(e){}
+  for(const p of net.players){ try{ p.conn && p.conn.close(); }catch(e){} }
+  try { if(net.peer) net.peer.destroy(); } catch(e){}
+  net.peer=null; net.conn=null; net.players=[]; net.started=false; net.nextPid=1; net.lastRoster=null;
+  net.connected=false; net.playing=false; net.lastSnapshot=null; net.camSet=false;
+  net.myPid=0; net.isHost=false;
+  netMode='single'; viewSnake=null; updateSpectate(false);
+}
+
+// ---- Lobby UI ----
+function showLobby(){ multiPanel.classList.add('hidden'); lobbyPanel.classList.remove('hidden'); }
+function hideLobby(){ lobbyPanel.classList.add('hidden'); multiPanel.classList.remove('hidden'); }
+function hostRoster(){
+  const list = [{ name:myName, pid:0, host:true, me:true }];
+  net.players.forEach(p=> list.push({ name:p.name, pid:p.pid, host:false, me:false }));
+  return list;
+}
+function renderLobby(roster){
+  lobbyCodeEl.textContent = net.roomCode || '----';
+  lobbyListEl.innerHTML = roster.map(r=>
+    '<div class="pl"><span>'+(r.host?'<span class="crown">👑</span> ':'')+r.name
+    + (r.me?' <span class="me">(나)</span>':'')+'</span></div>'
+  ).join('');
+  const count = roster.length;
+  if(net.isHost){
+    lobbyStartBtn.style.display = '';
+    lobbyStartBtn.disabled = count < 2;
+    lobbyHintEl.textContent = count < 2 ? '참가자를 기다리는 중… (2~4명)' : (count+'명 · 시작할 수 있어요!');
+  } else {
+    lobbyStartBtn.style.display = 'none';
+    lobbyHintEl.textContent = '방장이 시작하기를 기다리는 중… (현재 '+count+'명)';
+  }
+}
+
+// ---- Host: create a room ----
+function createRoom(){
+  const nm = sanitizeName(nameInput.value);
+  if(!nm){ setNetStatus('이름을 입력하세요.'); nameInput.focus(); return; }
+  myName = nm; netCleanup();
+  net.isHost = true; net.myPid = 0; net.nextPid = 1;
+  const code = genCode(); net.roomCode = code;
+  setNetStatus('방 생성 중...');
+  if(typeof Peer === 'undefined'){ setNetStatus('네트워크 모듈 로드 실패 — 인터넷 연결을 확인하세요.'); return; }
+  net.peer = new Peer(peerIdFor(code));
+  net.peer.on('open', ()=>{ showLobby(); renderLobby(hostRoster()); });
+  net.peer.on('connection', c=> setupHostConn(c));
+  net.peer.on('error', e=> setNetStatus(e.type==='unavailable-id' ? '코드 충돌 — 다시 만들어 주세요.' : '연결 오류: '+e.type));
+}
+function hostBroadcast(msg){ for(const p of net.players){ try{ p.conn.send(msg); }catch(e){} } }
+function setupHostConn(c){
+  c.on('data', d=>{
+    if(!d) return;
+    if(d.t==='join'){
+      if(net.started || net.players.length >= MAX_PLAYERS-1){ try{ c.send({t:'full'}); c.close(); }catch(e){} return; }
+      const pid = net.nextPid++;
+      const p = { conn:c, name:sanitizeName(d.name)||('P'+pid), pid, snake:null, input:{x:1,y:0,boost:false} };
+      net.players.push(p);
+      try{ c.send({t:'welcome', pid, host:myName, code:net.roomCode}); }catch(e){}
+      hostBroadcast({ t:'lobby', host:myName, names: net.players.map(pp=>({name:pp.name,pid:pp.pid})) });
+      renderLobby(hostRoster());
+    } else if(d.t==='input'){
+      const p = net.players.find(p=>p.conn===c);
+      if(p){ p.input.x=d.x||0; p.input.y=d.y||0; p.input.boost=!!d.b; }
+    }
+  });
+  c.on('close', ()=> hostGuestLeft(c));
+}
+function hostGuestLeft(c){
+  const p = net.players.find(p=>p.conn===c);
+  if(!p) return;
+  if(net.started && p.snake && !p.snake.dead) killSnake(p.snake);  // drop their snake from the round
+  net.players = net.players.filter(x=> x.conn!==c);                // always free the roster slot
+  if(!net.started){
+    hostBroadcast({ t:'lobby', host:myName, names: net.players.map(pp=>({name:pp.name,pid:pp.pid})) });
+    renderLobby(hostRoster());
+  }
+}
+
+// ---- Host: start the round (lobby → game) ----
+function hostStart(){
+  if(net.players.length < 1){ lobbyHintEl.textContent='최소 2명이 필요해요.'; return; }
+  net.started = true;
+  const humans = net.players.length + 1;
+  cfgBots = Math.max(2, 8 - humans);   // fewer bots as more humans join
+  cfgFood = 300;
+  netMode='host'; net.playing=true;
+  startScreen.classList.add('hidden'); overScreen.classList.add('hidden');
+  input.boost=false; viewSnake=null; updateSpectate(false);
+  reset();
+  player.name = myName; player.pid = 0;
+  const palette = ['#ffd24a','#4fd1ff','#ff7bd5'];
+  net.players.forEach((p,i)=>{
+    const sn = makeSnake(false, 200+i);
+    sn.isRemote = true; sn.pid = p.pid; sn.name = p.name;
+    sn.col = palette[i%palette.length]; sn.speed = 2.5; sn._input = p.input;
+    p.snake = sn; snakes.push(sn);
+  });
+  running=true; timeLeft=ROUND_SECONDS; lastFrame=0; acc=0; net.tick=0;
+  cam={x:player.x,y:player.y}; updateTimer();
+  hostBroadcast({ t:'start' });
+  requestAnimationFrame(hostLoop);
+}
+
+// ---- Guest: join a room ----
+function joinRoom(){
+  const nm = sanitizeName(nameInput.value);
+  if(!nm){ setNetStatus('이름을 입력하세요.'); nameInput.focus(); return; }
+  const code = (codeInput.value||'').trim().toUpperCase();
+  if(code.length<3){ setNetStatus('방 코드를 입력하세요.'); codeInput.focus(); return; }
+  myName = nm; netCleanup();
+  net.isHost = false; net.roomCode = code;
+  setNetStatus('접속 중...');
+  if(typeof Peer === 'undefined'){ setNetStatus('네트워크 모듈 로드 실패 — 인터넷 연결을 확인하세요.'); return; }
+  net.peer = new Peer();
+  net.peer.on('open', ()=>{
+    const c = net.peer.connect(peerIdFor(code));
+    net.conn = c;
+    c.on('open', ()=>{ net.connected=true; c.send({t:'join', name:myName}); setNetStatus('대기실 입장 중...'); });
+    c.on('data', d=> guestOnData(d));
+    c.on('close', onPeerLost);
+  });
+  net.peer.on('error', e=> setNetStatus('연결 실패 ('+e.type+') — 방 코드를 확인하세요.'));
+}
+function guestBuildRoster(d){
+  const list = [{name:d.host, pid:0, host:true, me:false}];
+  (d.names||[]).forEach(n=> list.push({ name:n.name, pid:n.pid, host:false, me:(n.pid===net.myPid) }));
+  net.lastRoster = list;
+  return list;
+}
+function guestOnData(d){
+  if(!d) return;
+  if(d.t==='welcome'){ net.myPid = d.pid; net.hostName = d.host; net.roomCode = d.code||net.roomCode; showLobby(); }
+  else if(d.t==='lobby'){ renderLobby(guestBuildRoster(d)); }
+  else if(d.t==='tolobby'){ guestReturnToLobby(guestBuildRoster(d)); }   // host went back to lobby after a round
+  else if(d.t==='full'){ setNetStatus('방이 가득 찼거나 이미 시작했습니다.'); hideLobby(); }
+  else if(d.t==='start'){ startGameGuest(); }
+  else if(d.t==='state'){ net.lastSnapshot=d; }
+  else if(d.t==='over'){ showMultiOver(d); }
+}
+function startGameGuest(){
+  netMode='guest'; net.playing=true;
+  startScreen.classList.add('hidden'); overScreen.classList.add('hidden');
+  input.boost=false; viewSnake=null; updateSpectate(false);
+  running=true; lastFrame=0; net.camSet=false;
+  requestAnimationFrame(guestLoop);
+}
+
+// ---- Host authoritative loop: simulate, render, broadcast ----
+function hostLoop(ts){
+  if(netMode!=='host' || !running) return;
+  if(!lastFrame) lastFrame = ts;
+  let frameDt = (ts-lastFrame)/1000; lastFrame = ts;
+  if(frameDt>0.25) frameDt = 0.25; renderDt = frameDt; acc += frameDt;
+  let steps=0;
+  while(running && acc>=STEP && steps<5){
+    for(const s of snakes) updateSnake(s);
+    collisions();
+    timeLeft -= STEP; acc-=STEP; steps++;
+  }
+  if(acc>STEP) acc=0;
+  // camera: follow my own snake; once I'm dead, spectate any living human
+  viewSnake = (!player.dead) ? player : (snakes.find(s=>s.isRemote && !s.dead) || player);
+  updateSpectate(player.dead);   // show "eaten — spectating" while the round continues
+  draw(); updateHUD(); updateTimer(); updateBoostHint();
+
+  net.tick = (net.tick||0)+1;
+  if(net.tick%3===0){ hostBroadcast(serializeState(net.tick%12===0)); }
+  // The round ends only when ALL human players are dead (or time runs out, or one snake remains).
+  const humansAlive = snakes.some(s=> (s.isPlayer||s.isRemote) && !s.dead);
+  const aliveCount = snakes.reduce((n,s)=> n + (s.dead?0:1), 0);
+  if(running && (!humansAlive || timeLeft<=0 || aliveCount<=1)){
+    finishRoundMulti(timeLeft<=0 ? 'timeup' : 'kill');
+  }
+  if(running) requestAnimationFrame(hostLoop);
+}
+
+// ---- Guest loop: send input, render the host's snapshots ----
+function guestLoop(ts){
+  if(netMode!=='guest' || !net.playing) return;
+  if(!lastFrame) lastFrame = ts;
+  let frameDt = (ts-lastFrame)/1000; lastFrame = ts;
+  if(frameDt>0.25) frameDt = 0.25; renderDt = frameDt;
+  if(net.conn && net.connected){
+    try { net.conn.send({t:'input', x:input.x, y:input.y, b:input.boost}); } catch(e){}
+  }
+  if(net.lastSnapshot) renderSnapshot(net.lastSnapshot);
+  if(net.playing) requestAnimationFrame(guestLoop);
+}
+
+function downsamplePath(path){
+  const out=[], cap=22, stepN = Math.max(1, Math.ceil(path.length/cap));
+  for(let i=0;i<path.length;i+=stepN) out.push([Math.round(path[i].x), Math.round(path[i].y)]);
+  return out;
+}
+function serializeState(includeFood){
+  const sn = snakes.map(s=>({
+    x:Math.round(s.x), y:Math.round(s.y), a:+s.ang.toFixed(2), l:Math.round(s.len),
+    c:s.col, n:s.name, d:s.dead?1:0,
+    p: s.isPlayer ? 0 : (s.isRemote ? (s.pid||0) : -1),   // player id: 0=host, 1..3=guests, -1=bot
+    bt:s.boostT>0?1:0, ph:+(s._chompPhase||0).toFixed(2), rk:s.rank||0, pa:downsamplePath(s.path)
+  }));
+  const msg = { t:'state', sn, tl:Math.round(timeLeft) };
+  if(includeFood) msg.fd = foods.map(f=>[Math.round(f.x),Math.round(f.y),Math.round(f.r),f.val||1,f.col]);
+  return msg;
+}
+function renderSnapshot(snap){
+  snakes = snap.sn.map(o=>({
+    x:o.x, y:o.y, ang:o.a, len:o.l, col:o.c, name:o.n, dead:!!o.d,
+    isPlayer:false, pid:(o.p!=null?o.p:-1), isHuman:(o.p!=null && o.p>=0),
+    boostT:o.bt?1:0, _chompPhase:o.ph||0, rank:o.rk||0,
+    path:(o.pa||[]).map(p=>({x:p[0],y:p[1]}))
+  }));
+  const mine = snakes.find(s=>s.pid===net.myPid);
+  player = mine || snakes[0] || player;
+  if(player) player.isPlayer = true;   // treat my own snake as "me" for HUD
+  // camera: my snake while alive; once eaten, spectate any other living human
+  if(mine && mine.dead){
+    const other = snakes.find(s=>s.isHuman && !s.dead);
+    viewSnake = other || mine;
+  } else {
+    viewSnake = mine || player;
+  }
+  updateSpectate(!!(mine && mine.dead));
+  if(snap.fd) foods = snap.fd.map(f=>({x:f[0],y:f[1],r:f[2],val:f[3],col:f[4]}));
+  if(typeof snap.tl==='number') timeLeft = snap.tl;
+  if(viewSnake && !net.camSet){ cam = {x:viewSnake.x, y:viewSnake.y}; net.camSet = true; }
+  running = true;
+  draw(); updateHUD(); updateTimer();
+}
+
+// Build a full standings list (every player + bots) for the result screen.
+function standingsFromSnakes(){
+  return [...snakes].sort((a,b)=>{
+    if(a.dead!==b.dead) return a.dead?1:-1;
+    if(!a.dead) return b.len-a.len;
+    return (b.deathOrder||0)-(a.deathOrder||0);
+  }).map(s=>({ n:s.name, l:Math.round(s.len), d:s.dead?1:0, c:s.col,
+              pid:(s.isPlayer?0:(s.isRemote?(s.pid||0):-1)) }));
+}
+function standingsFromSnap(snap){
+  if(!snap || !snap.sn) return [];
+  return [...snap.sn].sort((a,b)=>{
+    if((!!a.d)!==(!!b.d)) return a.d?1:-1;
+    return b.l - a.l;
+  }).map(o=>({ n:o.n, l:o.l, d:o.d?1:0, c:o.c, pid:(o.p!=null?o.p:-1) }));
+}
+function winnerPidOf(st){ const top = st.find(s=> s.pid>=0); return top ? top.pid : -1; }
+function finishRoundMulti(reason){
+  if(!running) return;
+  running = false; net.playing = false; viewSnake = null;
+  const standings = standingsFromSnakes();
+  const winnerPid = winnerPidOf(standings);
+  hostBroadcast({ t:'over', reason, standings, winnerPid });
+  showMultiOver({ reason, standings, winnerPid });
+}
+function showMultiOver(d){
+  running = false; net.playing = false; input.boost = false;
+  viewSnake = null; updateSpectate(false);
+  const st = d.standings || [];
+  const win = (d.winnerPid!=null && d.winnerPid===net.myPid);
+  overTitle.textContent = win ? 'YOU WIN!' : 'YOU LOSE';
+  const color = win ? '#62ffb0' : '#ff6a8a';
+  overTitle.style.background='none'; overTitle.style.webkitBackgroundClip='border-box';
+  overTitle.style.backgroundClip='border-box'; overTitle.style.color=color; overTitle.style.webkitTextFillColor=color;
+  const meRow = st.find(s=> s.pid===net.myPid);
+  const myRank = meRow ? (st.indexOf(meRow)+1) : '-';
+  document.getElementById('finalLen').textContent = 'Length ' + (meRow ? meRow.l : 0);
+  const reasonTxt = d.reason==='disconnect' ? '연결 종료' : d.reason==='timeup' ? '시간 종료' : '라운드 종료';
+  document.getElementById('finalRank').textContent = reasonTxt + ' · 내 순위 #' + myRank + ' / ' + st.length;
+  const medal = i => i===1?'🥇':i===2?'🥈':i===3?'🥉':'#'+i;
+  let rows = '<div class="fhead">Final Standings</div>';
+  st.forEach((s,i)=>{
+    const me = (s.pid===net.myPid);
+    const human = s.pid>=0;
+    const label = (s.d?'💀 ':'') + s.n + (me ? ' (나)' : (human ? ' 👤' : ''));
+    rows += '<div class="frow '+(me?'me':'')+' '+(s.d?'dead':'')+'">'
+      + '<span class="nm"><span class="pos">'+medal(i+1)+'</span>'
+      + '<span class="dot" style="background:'+(s.c||'#888')+'"></span>'
+      + '<span class="label">'+label+'</span></span>'
+      + '<span class="len">'+s.l+' P</span></div>';
+  });
+  document.getElementById('finalBoard').innerHTML = rows;
+  document.getElementById('retryBtn').textContent = '대기실로';   // RETRY returns to the lobby in multiplayer
+  setTimeout(()=> overScreen.classList.remove('hidden'), 300);
+}
+// guest's connection to the host dropped
+function onPeerLost(){
+  if(netMode!=='guest') return;
+  if(net.playing || running){
+    showMultiOver({ reason:'disconnect', standings:standingsFromSnap(net.lastSnapshot), winnerPid:-999 });
+  } else {
+    setNetStatus('방장 연결이 끊어졌습니다.'); hideLobby();
+  }
+}
+
+// RETRY: in multiplayer, keep everyone connected and go back to the lobby (don't disconnect).
+function onRetry(){
+  if(netMode==='host') hostReturnToLobby();
+  else if(netMode==='guest') guestReturnToLobby();
+  else backToMenu();   // single player
+}
+function hostReturnToLobby(){
+  net.started = false; running = false; net.playing = false;
+  input.boost = false; viewSnake = null; updateSpectate(false);
+  hostBroadcast({ t:'tolobby', host:myName, names: net.players.map(p=>({name:p.name,pid:p.pid})) });
+  overScreen.classList.add('hidden');
+  startScreen.classList.remove('hidden');
+  showLobby(); renderLobby(hostRoster());
+  cfgBots = BOT_COUNT; cfgFood = FOOD_COUNT; reset(); startIdle();   // idle background behind the lobby
+}
+function guestReturnToLobby(roster){
+  running = false; net.playing = false;
+  input.boost = false; viewSnake = null; updateSpectate(false);
+  overScreen.classList.add('hidden');
+  startScreen.classList.remove('hidden');
+  showLobby();
+  renderLobby(roster || net.lastRoster || [{name:net.hostName||'방장', pid:0, host:true, me:false}]);
+  cfgBots = BOT_COUNT; cfgFood = FOOD_COUNT; reset(); startIdle();
+}
+document.getElementById('createBtn').onclick = createRoom;
+document.getElementById('joinBtn').onclick = joinRoom;
+lobbyStartBtn.onclick = hostStart;
+lobbyLeaveBtn.onclick = backToMenu;
+// ===================== /MULTIPLAYER =====================
 
 // idle background draw before start (restartable when returning to the menu)
 let idleRunning = false;
