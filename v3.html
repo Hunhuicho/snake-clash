@@ -129,6 +129,12 @@
     color: #5a688c; font-size: 11px; font-weight: 700; letter-spacing: .5px;
     font-family: ui-monospace, Consolas, monospace; opacity: .8;
   }
+  #audioBtn {
+    position: fixed; left: 10px; bottom: 30px; z-index: 21; width: 34px; height: 34px;
+    border-radius: 50%; border: 1px solid rgba(120,150,230,.3); background: rgba(12,18,38,.6);
+    color: #cdd8f0; font-size: 16px; cursor: pointer; line-height: 1; padding: 0;
+  }
+  #audioBtn:hover { border-color: rgba(120,150,230,.6); }
   #spectateBanner {
     position: fixed; left: 50%; top: 70px; transform: translateX(-50%); z-index: 8;
     pointer-events: none; color: #ff8aa3; font-size: 15px; font-weight: 800;
@@ -162,6 +168,7 @@
 <div id="leaderboard"><h3>Leaderboard</h3><div id="lbRows"></div></div>
 <div id="boost">마우스 / 손가락으로 조준 · <b>클릭·스페이스</b>로 부스트 · 태블릿 <b>더블탭</b>으로 부스트</div>
 <div id="ver"></div>
+<button id="audioBtn" title="소리 켜기/끄기">🔊</button>
 <div id="spectateBanner" class="hidden">💀 잡아먹힘 — 상대 생존 중, 관전 중…</div>
 
 <div class="overlay" id="startScreen">
@@ -221,7 +228,7 @@
 
 <script>
 // Bump this on every deploy so the live build is easy to verify.
-const VERSION = 'v3.4.0';
+const VERSION = 'v3.5.0';
 const VARIANT = 'Online';
 const BUILD_DATE = '2026-06-17';
 window.SNAKE_VERSION = VERSION + ' ' + VARIANT;
@@ -229,6 +236,49 @@ window.SNAKE_VERSION = VERSION + ' ' + VARIANT;
   const verEl = document.getElementById('ver');
   if(verEl) verEl.textContent = 'Snake Clash ' + VARIANT + ' ' + VERSION + ' · ' + BUILD_DATE;
 }
+
+// ---- Audio: procedural background music + SFX via Web Audio (no files; mute persists) ----
+const SND = (function(){
+  let ctx=null, master, musGain, sfxGain, on=true, timer=null, step=0, lastEat=0;
+  try { on = localStorage.getItem('sc_sound') !== '0'; } catch(e){}
+  function init(){
+    if(ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
+    ctx = new AC();
+    master = ctx.createGain(); master.gain.value = 0.85; master.connect(ctx.destination);
+    musGain = ctx.createGain(); musGain.gain.value = 0.16; musGain.connect(master);
+    sfxGain = ctx.createGain(); sfxGain.gain.value = 0.5; sfxGain.connect(master);
+  }
+  function resume(){ init(); if(ctx && ctx.state==='suspended') ctx.resume(); }
+  function tone(freq, dur, type, gain, dest, slideTo){
+    if(!ctx || !on) return;
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.type=type||'square'; o.frequency.value=freq; o.connect(g); g.connect(dest||sfxGain);
+    const t=ctx.currentTime;
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t+dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain||0.4, t+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.start(t); o.stop(t+dur+0.03);
+  }
+  function eat(){ resume(); const now=ctx?ctx.currentTime:0; if(now-lastEat<0.05) return; lastEat=now; tone(620+Math.random()*160, 0.07, 'square', 0.2); }
+  function chomp(){ resume(); tone(190,0.10,'sawtooth',0.45,null,90); setTimeout(()=>tone(120,0.10,'sawtooth',0.4,null,70),55); }
+  function die(){ resume(); tone(420,0.5,'triangle',0.5,null,70); }
+  function win(){ resume(); [523,659,784,1047].forEach((f,i)=> setTimeout(()=>tone(f,0.2,'square',0.4),i*120)); }
+  function lose(){ resume(); [392,311,247].forEach((f,i)=> setTimeout(()=>tone(f,0.26,'triangle',0.4),i*160)); }
+  const LEAD=[523,587,659,784,659,587,523,440, 587,659,784,880,784,659,587,523];
+  const BASS=[131,131,165,165,196,196,165,131];
+  function mtick(){
+    if(!ctx||!on) return;
+    if(step%2===0){ const b=BASS[(step>>1)%BASS.length]; tone(b,0.42,'triangle',0.2,musGain); }
+    tone(LEAD[step%LEAD.length],0.24,'sine',0.13,musGain);
+    step=(step+1)%64;
+  }
+  function startMusic(){ if(!on) return; resume(); if(timer||!ctx) return; step=0; timer=setInterval(mtick,215); }
+  function stopMusic(){ if(timer){ clearInterval(timer); timer=null; } }
+  function toggle(){ on=!on; try{ localStorage.setItem('sc_sound', on?'1':'0'); }catch(e){} if(!on) stopMusic(); return on; }
+  return { resume, eat, chomp, die, win, lose, startMusic, stopMusic, toggle, isOn:()=>on };
+})();
 
 const cv = document.getElementById('game');
 const ctx = cv.getContext('2d');
@@ -508,6 +558,7 @@ function updateSnake(s){
     const f = foods[i];
     if(dist2(s.x,s.y,f.x,f.y) < (r+f.r)*(r+f.r)){
       s.len += f.val; foods.splice(i,1);
+      if(s.isPlayer) SND.eat();
       if(!f.v){ const p = randomWorldPoint(); spawnFood(p.x,p.y); } // keep field stocked
     }
   }
@@ -516,6 +567,7 @@ function updateSnake(s){
 function killSnake(s){
   if(s.dead) return;
   s.dead = true;
+  if(s.isPlayer) SND.die();
   s.deathOrder = ++killCount;   // record elimination order for final placement
   // scatter mass as food
   const step = Math.max(1, Math.floor(s.path.length / Math.min(s.path.length, 40)));
@@ -568,6 +620,7 @@ function collisions(){
           A.len += biteLen * EAT_GAIN;         // bite a chunk; B lives on as the remaining piece
           B.len = remain;
         }
+        if(A.isPlayer) SND.chomp();
         A._biteCD = 4;
       } else if(A.len < B.len){
         // A's head ran into a bigger snake's body → A is the prey and is eaten
@@ -866,12 +919,14 @@ function startGame(){
   startScreen.classList.add('hidden');
   overScreen.classList.add('hidden');
   cam = {x:player.x, y:player.y};
+  SND.resume(); SND.startMusic();
   updateTimer();
   requestAnimationFrame(loop);
 }
 function finishRound(outcome){
   if(!running) return;
   running = false;
+  SND.stopMusic(); if(outcome==='win') SND.win(); else SND.lose();
   let title, color, msg;
   if(outcome === 'win'){ title = 'YOU WIN!'; color = '#62ffb0'; msg = '🏆 라운드 제패!'; }
   else if(outcome === 'timeup'){ title = 'TIME UP'; color = '#ffd86b'; msg = '시간 종료'; }
@@ -911,6 +966,7 @@ document.getElementById('retryBtn').onclick = ()=> onRetry();
 function backToMenu(){
   running = false;
   input.boost = false;
+  SND.stopMusic();
   netCleanup();     // close any peer connection and return to single mode
   if(typeof lobbyPanel!=='undefined' && lobbyPanel) lobbyPanel.classList.add('hidden');
   if(typeof selectMode==='function') selectMode('single');   // reset start-screen panels
@@ -934,6 +990,12 @@ diffBtns.addEventListener('click', e=>{
   selectDifficulty(+b.dataset.lv);
 });
 selectDifficulty(difficulty); // initialise highlight + description
+
+// ---- Audio toggle button ----
+const audioBtn = document.getElementById('audioBtn');
+function refreshAudioBtn(){ audioBtn.textContent = SND.isOn() ? '🔊' : '🔇'; }
+audioBtn.onclick = ()=>{ const on = SND.toggle(); refreshAudioBtn(); if(on){ SND.resume(); if(running) SND.startMusic(); } };
+refreshAudioBtn();
 
 // ---- Input ----
 function setAim(clientX, clientY){
@@ -1044,7 +1106,7 @@ function renderLobby(roster){
 function createRoom(){
   const nm = sanitizeName(nameInput.value);
   if(!nm){ setNetStatus('이름을 입력하세요.'); nameInput.focus(); return; }
-  myName = nm; netCleanup();
+  myName = nm; netCleanup(); SND.resume();
   net.isHost = true; net.myPid = 0; net.nextPid = 1;
   const code = genCode(); net.roomCode = code;
   setNetStatus('방 생성 중...');
@@ -1105,6 +1167,7 @@ function hostStart(){
   });
   running=true; timeLeft=ROUND_SECONDS; lastFrame=0; acc=0; net.tick=0;
   cam={x:player.x,y:player.y}; updateTimer();
+  SND.resume(); SND.startMusic();
   hostBroadcast({ t:'start' });
   requestAnimationFrame(hostLoop);
 }
@@ -1115,7 +1178,7 @@ function joinRoom(){
   if(!nm){ setNetStatus('이름을 입력하세요.'); nameInput.focus(); return; }
   const code = (codeInput.value||'').trim().toUpperCase();
   if(code.length<3){ setNetStatus('방 코드를 입력하세요.'); codeInput.focus(); return; }
-  myName = nm; netCleanup();
+  myName = nm; netCleanup(); SND.resume();
   net.isHost = false; net.roomCode = code;
   setNetStatus('접속 중...');
   if(typeof Peer === 'undefined'){ setNetStatus('네트워크 모듈 로드 실패 — 인터넷 연결을 확인하세요.'); return; }
@@ -1150,6 +1213,8 @@ function startGameGuest(){
   startScreen.classList.add('hidden'); overScreen.classList.add('hidden');
   input.boost=false; viewSnake=null; updateSpectate(false);
   running=true; lastFrame=0; net.camSet=false;
+  net._prevLen=null; net._prevDead=false;       // reset SFX diff tracking
+  SND.resume(); SND.startMusic();
   requestAnimationFrame(guestLoop);
 }
 
@@ -1196,8 +1261,24 @@ function guestLoop(ts){
 }
 
 function downsamplePath(path){
-  const out=[], cap=22, stepN = Math.max(1, Math.ceil(path.length/cap));
+  const out=[], cap=28, stepN = Math.max(1, Math.ceil(path.length/cap));
   for(let i=0;i<path.length;i+=stepN) out.push([Math.round(path[i].x), Math.round(path[i].y)]);
+  // always include the tail end so the body length matches the host
+  if(path.length && (path.length-1) % stepN !== 0){ const t=path[path.length-1]; out.push([Math.round(t.x),Math.round(t.y)]); }
+  return out;
+}
+// Guest side: the body arrives as a few sparse points (downsampled for bandwidth).
+// Re-fill points between them at the normal segment spacing so the body draws as
+// smoothly as the host's — otherwise it looks chunky / "low-res".
+function densifyPath(pts, spacing){
+  if(!pts || pts.length < 2) return pts || [];
+  const out = [pts[0]];
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1], b=pts[i];
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const n = Math.max(1, Math.round(Math.hypot(dx,dy)/spacing));
+    for(let k=1;k<=n;k++){ const t=k/n; out.push({x:a.x+dx*t, y:a.y+dy*t}); }
+  }
   return out;
 }
 function serializeState(includeFood){
@@ -1216,9 +1297,18 @@ function renderSnapshot(snap){
     x:o.x, y:o.y, ang:o.a, len:o.l, col:o.c, name:o.n, dead:!!o.d,
     isPlayer:false, pid:(o.p!=null?o.p:-1), isHuman:(o.p!=null && o.p>=0),
     boostT:o.bt?1:0, _chompPhase:o.ph||0, rank:o.rk||0,
-    path:(o.pa||[]).map(p=>({x:p[0],y:p[1]}))
+    path: densifyPath((o.pa||[]).map(p=>({x:p[0],y:p[1]})), SEG_SPACING)
   }));
   const mine = snakes.find(s=>s.pid===net.myPid);
+  // guest SFX: infer eat / bite / death from my snake's length & state changes
+  if(mine){
+    if(net._prevLen!=null){
+      if(mine.dead && !net._prevDead) SND.die();
+      else if(mine.len > net._prevLen + 4) SND.chomp();   // big jump = ate a snake
+      else if(mine.len > net._prevLen) SND.eat();           // small jump = ate food
+    }
+    net._prevLen = mine.len; net._prevDead = mine.dead;
+  }
   player = mine || snakes[0] || player;
   if(player) player.isPlayer = true;   // treat my own snake as "me" for HUD
   // camera: my snake while alive; once eaten, spectate any other living human
@@ -1266,6 +1356,7 @@ function showMultiOver(d){
   viewSnake = null; updateSpectate(false);
   const st = d.standings || [];
   const win = (d.winnerPid!=null && d.winnerPid===net.myPid);
+  SND.stopMusic(); if(win) SND.win(); else SND.lose();
   overTitle.textContent = win ? 'YOU WIN!' : 'YOU LOSE';
   const color = win ? '#62ffb0' : '#ff6a8a';
   overTitle.style.background='none'; overTitle.style.webkitBackgroundClip='border-box';
@@ -1309,7 +1400,7 @@ function onRetry(){
 }
 function hostReturnToLobby(){
   net.started = false; running = false; net.playing = false;
-  input.boost = false; viewSnake = null; updateSpectate(false);
+  input.boost = false; viewSnake = null; updateSpectate(false); SND.stopMusic();
   hostBroadcast({ t:'tolobby', host:myName, names: net.players.map(p=>({name:p.name,pid:p.pid})) });
   overScreen.classList.add('hidden');
   startScreen.classList.remove('hidden');
@@ -1318,7 +1409,7 @@ function hostReturnToLobby(){
 }
 function guestReturnToLobby(roster){
   running = false; net.playing = false;
-  input.boost = false; viewSnake = null; updateSpectate(false);
+  input.boost = false; viewSnake = null; updateSpectate(false); SND.stopMusic();
   overScreen.classList.add('hidden');
   startScreen.classList.remove('hidden');
   showLobby();
