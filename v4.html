@@ -195,7 +195,7 @@
 
 <div class="overlay" id="startScreen">
   <div class="title">SNAKE CLASH</div>
-  <div class="subtitle"><b>파티 모드! 아무도 죽지 않아요.</b> 내가 더 크면 상대 <b>꼬리를 조금씩 베어</b> 내 점수로 — 단 상대는 <b>최소 크기까지만</b> 줄고 사라지지 않아요. 아이템도 주워요: 💨<b>방귀</b>(쫓아오는 상대 잠깐 멈춤) ✨<b>순간이동</b>(위험 회피). <b>1·2 키</b> 또는 하단 슬롯 탭으로 사용. <b>길이 250 먼저 도달</b>하면 즉시 승리, 아니면 5분 후 1등!</div>
+  <div class="subtitle"><b>파티 모드! 아무도 죽지 않아요.</b> 내가 더 크면 상대 <b>꼬리를 조금씩 베어</b> 내 점수로 — 단 상대는 <b>최소 크기까지만</b> 줄고 사라지지 않아요. 시작부터 💨<b>방귀</b>(쫓는 상대 멈춤)·✨<b>순간이동</b>(회피) 하나씩 지급 — <b>1·2 키</b> 또는 하단 슬롯 탭으로 사용. 맵에서 더 주울 수 있어요. <b>최소 크기일 땐 부스터 무제한!</b> <b>길이 250 먼저 도달</b>하면 즉시 승리, 아니면 5분 후 1등!</div>
 
   <div class="modeTabs" id="modeTabs">
     <button data-mode="single" class="sel">🤖 싱글 (봇 대결)</button>
@@ -250,7 +250,7 @@
 
 <script>
 // Bump this on every deploy so the live build is easy to verify.
-const VERSION = 'v4.0.0';
+const VERSION = 'v4.0.3';
 const VARIANT = 'Party';
 const BUILD_DATE = '2026-06-22';
 window.SNAKE_VERSION = VERSION + ' ' + VARIANT;
@@ -419,6 +419,7 @@ function makeSnake(isPlayer, idx){
     boostT: 0,
     targetAng: ang,
     wanderT: 0,
+    slots: [null, null],                    // held items
     _chompPhase: Math.random()*Math.PI*2,   // desync each snake's mouth animation
   };
 }
@@ -542,6 +543,7 @@ function botThink(s){
   }
 
   steer(s, desired, P.turn);
+  if(netMode==='single') botUseItems(s);   // bots use their items (single mode)
 }
 
 function updateSnake(s){
@@ -550,24 +552,26 @@ function updateSnake(s){
   if(s.isPlayer){
     const desired = Math.atan2(input.y, input.x);
     if(input.x!==0 || input.y!==0) steer(s, desired);
-    if(input.boost && s.len > 14){ s.boostT = 4; }
+    if(input.boost){ s.boostT = 4; }    // boostable at any size; only costs length above MIN
   } else if(s.isRemote){
     // host side: this snake is driven by a remote player's input
     const ri = s._input || {x:0,y:0,boost:false};
     const desired = Math.atan2(ri.y, ri.x);
     if(ri.x!==0 || ri.y!==0) steer(s, desired, 0.16);
-    if(ri.boost && s.len > 14){ s.boostT = 4; }
+    if(ri.boost){ s.boostT = 4; }       // boostable at any size; only costs length above MIN
   } else {
     botThink(s);
   }
 
   let sp = s.speed;
-  if(s.boostT>0 && s.len > MIN_LEN){
+  if(s.boostT>0){
     sp *= 1.9; s.boostT--;
-    s._boostDrain = (s._boostDrain||0) + 1;
-    if(s._boostDrain >= 6){ s._boostDrain = 0; s.len = Math.max(MIN_LEN, s.len-1);
-      const tail = s.path[s.path.length-1] || s;
-      spawnFood(tail.x + rand(-5,5), tail.y + rand(-5,5), 4, s.col, true); }
+    if(s.len > MIN_LEN){               // boost costs length only ABOVE min → unlimited boost at min size
+      s._boostDrain = (s._boostDrain||0) + 1;
+      if(s._boostDrain >= 6){ s._boostDrain = 0; s.len = Math.max(MIN_LEN, s.len-1);
+        const tail = s.path[s.path.length-1] || s;
+        spawnFood(tail.x + rand(-5,5), tail.y + rand(-5,5), 4, s.col, true); }
+    }
   }
   s.x += Math.cos(s.ang)*sp;
   s.y += Math.sin(s.ang)*sp;
@@ -641,79 +645,123 @@ function collisions(){
   }
 }
 
-// ===================== ITEMS (single mode): 💨 fart freezes pursuers, ✨ teleport escapes =====
+// ===================== ITEMS: 💨 fart freezes others, ✨ teleport escapes. EVERY snake holds/uses items =====
 let items = [];          // {x,y,type} pickups on the map
-let clouds = [];         // {x,y,t} fart gas clouds
-let slots = [null, null];
-let itemSpawnT = 0, toastT = 0, fullMsgT = 0;
+let clouds = [];         // {x,y,t,owner} fart gas clouds
+let toastT = 0, fullMsgT = 0;
 const ITEM_TYPES = ['fart','teleport'];
 const ITEM_DEF = { fart:{emoji:'💨', name:'방귀'}, teleport:{emoji:'✨', name:'순간이동'} };
-const MAX_ITEMS = 6, CLOUD_R = 150;
+const MAX_ITEMS = 16, CLOUD_R = 150;
 const itemSlotsEl = document.getElementById('itemSlots');
 const itemToastEl = document.getElementById('itemToast');
 
-function resetItems(){ items=[]; clouds=[]; slots=[null,null]; itemSpawnT=180; toastT=0; fullMsgT=0; updateSlotUI(); }
+function randItemType(){ return ITEM_TYPES[(Math.random()*ITEM_TYPES.length)|0]; }
+function spawnOneItem(){
+  if(items.length >= MAX_ITEMS + 6) return;     // hard cap
+  const p = randomWorldPoint();
+  items.push({ x:p.x, y:p.y, type: randItemType() });
+}
+function resetItems(){
+  items=[]; clouds=[]; toastT=0; fullMsgT=0;
+  if(player) player.slots = ['fart','teleport'];               // player starts with one of each
+  for(const s of snakes){ if(!s.isPlayer) s.slots = [Math.random()<0.85?randItemType():null, Math.random()<0.55?randItemType():null]; }
+  for(let i=0;i<MAX_ITEMS;i++) spawnOneItem();                  // start the field well-stocked
+  updateSlotUI();
+}
 function showToast(msg){ toastT = 110; itemToastEl.textContent = msg; itemToastEl.classList.remove('hidden'); }
 function updateSlotUI(){
   const on = (netMode==='single' && running);
   itemSlotsEl.classList.toggle('hidden', !on);
+  const ps = (player && player.slots) || [null,null];
   [...itemSlotsEl.children].forEach((b,i)=>{
-    const t = slots[i];
+    const t = ps[i];
     b.classList.toggle('has', !!t);
     b.querySelector('.ic').textContent = t ? ITEM_DEF[t].emoji : '';
   });
 }
-function itemSpawnTick(){
-  if(itemSpawnT > 0){ itemSpawnT--; return; }
-  itemSpawnT = (240 + (Math.random()*240|0));   // ~4–8s
-  if(items.length >= MAX_ITEMS) return;
-  const p = randomWorldPoint();
-  items.push({ x:p.x, y:p.y, type: ITEM_TYPES[(Math.random()*ITEM_TYPES.length)|0] });
+function itemSpawnTick(){   // keep the field stocked (replenishes quickly)
+  if(items.length < MAX_ITEMS && Math.random() < 0.05) spawnOneItem();
 }
-function pickupItems(){
-  if(toastT>0) toastT--; else itemToastEl.classList.add('hidden');
-  if(fullMsgT>0) fullMsgT--;
-  if(!player || player.dead) return;
-  const r = radiusOf(player) + 14;
+function snakePickup(s){
+  if(!s || s.dead || !s.slots) return;
+  const r = radiusOf(s) + 14;
   for(let i=items.length-1;i>=0;i--){
     const it = items[i];
-    if(dist2(player.x,player.y,it.x,it.y) < r*r){
-      const slot = slots.indexOf(null);
-      if(slot>=0){ slots[slot]=it.type; items.splice(i,1); SND.eat(); updateSlotUI(); }
-      else if(fullMsgT<=0){ fullMsgT=120; showToast('아이템 슬롯이 가득 찼어요 (1·2로 사용)'); }
+    if(dist2(s.x,s.y,it.x,it.y) < r*r){
+      const slot = s.slots.indexOf(null);
+      if(slot>=0){ s.slots[slot]=it.type; items.splice(i,1); if(s.isPlayer){ SND.eat(); updateSlotUI(); } }
+      else if(s.isPlayer && fullMsgT<=0){ fullMsgT=120; showToast('아이템 슬롯이 가득 찼어요 (1·2로 사용)'); }
     }
   }
+}
+function pickupItems(){     // per step: tick toasts + let every snake collect
+  if(toastT>0) toastT--; else itemToastEl.classList.add('hidden');
+  if(fullMsgT>0) fullMsgT--;
+  for(const s of snakes) snakePickup(s);
 }
 function updateClouds(){
   for(let i=clouds.length-1;i>=0;i--){
     const c = clouds[i]; c.t--;
     if(c.t<=0){ clouds.splice(i,1); continue; }
     for(const s of snakes){
-      if(s===player || s.dead) continue;
+      if(s===c.owner || s.dead) continue;       // a fart never freezes its owner
       if(dist2(s.x,s.y,c.x,c.y) < CLOUD_R*CLOUD_R) s._frozenT = Math.max(s._frozenT||0, 24);
     }
   }
 }
-function useItem(slot){
-  if(slot<0 || slot>1) return;
-  const type = slots[slot];
+function useSnakeItem(s, slot){
+  if(!s || s.dead || !s.slots) return;
+  const type = s.slots[slot];
   if(!type) return;
   if(type==='fart'){
-    const tail = player.path[player.path.length-1] || player;
-    clouds.push({ x:tail.x, y:tail.y, t:120 });   // ~2s cloud
-    SND.chomp();
+    const tail = s.path[s.path.length-1] || s;
+    clouds.push({ x:tail.x, y:tail.y, t:120, owner:s });        // ~2s cloud
+    if(s.isPlayer) SND.chomp();
   } else if(type==='teleport'){
-    const jump = 240;
-    player.x += Math.cos(player.ang)*jump; player.y += Math.sin(player.ang)*jump;
-    const d = Math.hypot(player.x,player.y); if(d > WORLD-20){ const k=(WORLD-20)/d; player.x*=k; player.y*=k; }
-    player.path = [{x:player.x, y:player.y}];        // blink: body collapses then regrows
-    SND.win && SND.eat();
+    const fromX=s.x, fromY=s.y;
+    let best=null, bestClear=-1;
+    for(let i=0;i<24;i++){
+      const p = randomWorldPoint();
+      if(Math.hypot(p.x-fromX, p.y-fromY) < 700) continue;       // must be a real long jump
+      let nearest = 1e9;
+      for(const o of snakes){
+        if(o===s || o.dead) continue;
+        let d = dist2(p.x,p.y,o.x,o.y); if(d<nearest) nearest=d;
+        for(let j=0;j<o.path.length;j+=4){ const dd=dist2(p.x,p.y,o.path[j].x,o.path[j].y); if(dd<nearest) nearest=dd; }
+      }
+      if(nearest > 320*320){ best=p; break; }                    // clearly safe → take it
+      if(nearest > bestClear){ bestClear=nearest; best=p; }
+    }
+    if(!best) best = randomWorldPoint();
+    s.x=best.x; s.y=best.y; s.path=[{x:s.x,y:s.y}];               // blink to the new spot
+    if(s.isPlayer) SND.eat();
   }
-  slots[slot] = null; updateSlotUI();
+  s.slots[slot] = null;
+  spawnOneItem();                                                // using an item drops a fresh one on the map
+  if(s.isPlayer) updateSlotUI();
 }
-// activate via on-screen slot buttons (tap) ...
+function useItem(slot){ if(slot>=0 && slot<=1) useSnakeItem(player, slot); }
+// bots use items sensibly: teleport to flee a close bigger snake; fart on a close chaser; rare random use
+function botUseItems(s){
+  if(!s.slots) return;
+  const iT = s.slots.indexOf('teleport'), iF = s.slots.indexOf('fart');
+  if(iT<0 && iF<0) return;
+  let threatD=1e9, chaserD=1e9;
+  for(const o of snakes){
+    if(o===s || o.dead) continue;
+    const d = Math.hypot(o.x-s.x, o.y-s.y);
+    if(o.len > s.len+2){
+      if(d < threatD) threatD = d;
+      const fwd = Math.cos(s.ang)*(s.x-o.x) + Math.sin(s.ang)*(s.y-o.y);   // o behind me?
+      if(fwd > 0 && d < chaserD) chaserD = d;
+    }
+  }
+  if(iT>=0 && threatD < 150 && Math.random()<0.07) useSnakeItem(s, iT);
+  else if(iF>=0 && chaserD < 210 && Math.random()<0.06) useSnakeItem(s, iF);
+  else if(Math.random()<0.0025) useSnakeItem(s, (iT>=0?iT:iF));
+}
+// activate via on-screen slot buttons (tap) + keyboard 1 / 2
 itemSlotsEl.addEventListener('click', e=>{ const b=e.target.closest('.slot'); if(b) useItem(+b.dataset.slot); });
-// ... and via keyboard 1 / 2 on PC
 window.addEventListener('keydown', e=>{ if(e.key==='1') useItem(0); else if(e.key==='2') useItem(1); });
 // ===================== /ITEMS =====================
 
@@ -916,6 +964,18 @@ function drawSnake(s, ox, oy){
     ctx.fillStyle = s.isPlayer ? '#eafff5' : 'rgba(225,233,250,.92)';
     ctx.fillText(s.name, startX + rankW, ty);
     ctx.textBaseline = 'alphabetic';
+
+    // held-item icons, in a little pill above the name
+    const held = (s.slots || []).filter(Boolean);
+    if(held.length){
+      const str = held.map(t=>ITEM_DEF[t].emoji).join(' ');
+      ctx.font = '13px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      const w = ctx.measureText(str).width, iy = ty - fs/2 - 14;
+      ctx.fillStyle = 'rgba(8,12,24,.55)';
+      roundRect(ctx, hx - w/2 - 6, iy - 11, w + 12, 22, 11); ctx.fill();
+      ctx.fillText(str, hx, iy);
+      ctx.textBaseline = 'alphabetic';
+    }
   }
 }
 function roundRect(c,x,y,w,h,r){
