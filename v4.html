@@ -250,7 +250,7 @@
 
 <script>
 // Bump this on every deploy so the live build is easy to verify.
-const VERSION = 'v4.0.3';
+const VERSION = 'v4.1.0';
 const VARIANT = 'Party';
 const BUILD_DATE = '2026-06-22';
 window.SNAKE_VERSION = VERSION + ' ' + VARIANT;
@@ -543,7 +543,7 @@ function botThink(s){
   }
 
   steer(s, desired, P.turn);
-  if(netMode==='single') botUseItems(s);   // bots use their items (single mode)
+  if(netMode==='single' || netMode==='host') botUseItems(s);   // bots use their items
 }
 
 function updateSnake(s){
@@ -663,14 +663,16 @@ function spawnOneItem(){
 }
 function resetItems(){
   items=[]; clouds=[]; toastT=0; fullMsgT=0;
-  if(player) player.slots = ['fart','teleport'];               // player starts with one of each
-  for(const s of snakes){ if(!s.isPlayer) s.slots = [Math.random()<0.85?randItemType():null, Math.random()<0.55?randItemType():null]; }
+  for(const s of snakes){
+    if(s.isPlayer || s.isRemote) s.slots = ['fart','teleport'];   // humans start with one of each
+    else s.slots = [Math.random()<0.85?randItemType():null, Math.random()<0.55?randItemType():null];
+  }
   for(let i=0;i<MAX_ITEMS;i++) spawnOneItem();                  // start the field well-stocked
   updateSlotUI();
 }
 function showToast(msg){ toastT = 110; itemToastEl.textContent = msg; itemToastEl.classList.remove('hidden'); }
 function updateSlotUI(){
-  const on = (netMode==='single' && running);
+  const on = running && (netMode==='single' || net.playing);   // single, host, or guest in-game
   itemSlotsEl.classList.toggle('hidden', !on);
   const ps = (player && player.slots) || [null,null];
   [...itemSlotsEl.children].forEach((b,i)=>{
@@ -740,7 +742,11 @@ function useSnakeItem(s, slot){
   spawnOneItem();                                                // using an item drops a fresh one on the map
   if(s.isPlayer) updateSlotUI();
 }
-function useItem(slot){ if(slot>=0 && slot<=1) useSnakeItem(player, slot); }
+function useItem(slot){
+  if(slot<0 || slot>1) return;
+  if(netMode==='guest'){ try{ net.conn && net.conn.send({t:'useitem', slot}); }catch(e){} return; }  // ask the host
+  useSnakeItem(player, slot);   // single or host: use my own item directly
+}
 // bots use items sensibly: teleport to flee a close bigger snake; fart on a close chaser; rare random use
 function botUseItems(s){
   if(!s.slots) return;
@@ -1338,6 +1344,9 @@ function setupHostConn(c){
     } else if(d.t==='input'){
       const p = net.players.find(p=>p.conn===c);
       if(p){ p.input.x=d.x||0; p.input.y=d.y||0; p.input.boost=!!d.b; }
+    } else if(d.t==='useitem'){
+      const p = net.players.find(p=>p.conn===c);
+      if(p && p.snake) useSnakeItem(p.snake, d.slot|0);   // remote player uses their item
     }
   });
   c.on('close', ()=> hostGuestLeft(c));
@@ -1373,6 +1382,7 @@ function hostStart(){
     p.snake = sn; snakes.push(sn);
   });
   running=true; timeLeft=ROUND_SECONDS; lastFrame=0; acc=0; net.tick=0;
+  resetItems();   // give every snake starting items + stock the map
   cam={x:player.x,y:player.y}; updateTimer();
   SND.resume(); SND.startMusic();
   hostBroadcast({ t:'start' });
@@ -1440,6 +1450,7 @@ function hostLoop(ts){
   while(running && acc>=STEP && steps<5){
     for(const s of snakes) updateSnake(s);
     collisions();
+    updateClouds(); pickupItems(); itemSpawnTick();   // items run on the host
     timeLeft -= STEP; acc-=STEP; steps++;
   }
   if(acc>STEP) acc=0;
@@ -1492,24 +1503,34 @@ function densifyPath(pts, spacing){
   }
   return out;
 }
+const ITEM_CODE = { fart:0, teleport:1 };
 function serializeState(includeFood){
   const sn = snakes.map(s=>({
     x:Math.round(s.x), y:Math.round(s.y), a:+s.ang.toFixed(2), l:Math.round(s.len),
     c:s.col, n:s.name, d:s.dead?1:0,
     p: s.isPlayer ? 0 : (s.isRemote ? (s.pid||0) : -1),   // player id: 0=host, 1..3=guests, -1=bot
-    bt:s.boostT>0?1:0, ph:+(s._chompPhase||0).toFixed(2), rk:s.rank||0, pa:downsamplePath(s.path)
+    bt:s.boostT>0?1:0, ph:+(s._chompPhase||0).toFixed(2), rk:s.rank||0, pa:downsamplePath(s.path),
+    fz: s._frozenT>0?1:0,
+    sl: (s.slots||[null,null]).map(t=> t==null ? -1 : ITEM_CODE[t])   // held items
   }));
-  const msg = { t:'state', sn, tl:Math.round(timeLeft) };
+  const msg = { t:'state', sn, tl:Math.round(timeLeft),
+    it: items.map(o=>[Math.round(o.x), Math.round(o.y), ITEM_CODE[o.type]]),   // map items
+    cl: clouds.map(c=>[Math.round(c.x), Math.round(c.y), c.t])                  // fart clouds
+  };
   if(includeFood) msg.fd = foods.map(f=>[Math.round(f.x),Math.round(f.y),Math.round(f.r),f.val||1,f.col]);
   return msg;
 }
 function renderSnapshot(snap){
+  const ITEM_NAME = ['fart','teleport'];
   snakes = snap.sn.map(o=>({
     x:o.x, y:o.y, ang:o.a, len:o.l, col:o.c, name:o.n, dead:!!o.d,
     isPlayer:false, pid:(o.p!=null?o.p:-1), isHuman:(o.p!=null && o.p>=0),
-    boostT:o.bt?1:0, _chompPhase:o.ph||0, rank:o.rk||0,
+    boostT:o.bt?1:0, _chompPhase:o.ph||0, rank:o.rk||0, _frozenT:o.fz?1:0,
+    slots: (o.sl||[-1,-1]).map(i=> i<0 ? null : ITEM_NAME[i]),
     path: densifyPath((o.pa||[]).map(p=>({x:p[0],y:p[1]})), SEG_SPACING)
   }));
+  if(snap.it) items = snap.it.map(a=>({x:a[0],y:a[1],type:ITEM_NAME[a[2]]}));
+  if(snap.cl) clouds = snap.cl.map(a=>({x:a[0],y:a[1],t:a[2]}));
   const mine = snakes.find(s=>s.pid===net.myPid);
   // guest SFX: infer eat / bite / death from my snake's length & state changes
   if(mine){
@@ -1534,7 +1555,7 @@ function renderSnapshot(snap){
   if(typeof snap.tl==='number') timeLeft = snap.tl;
   if(viewSnake && !net.camSet){ cam = {x:viewSnake.x, y:viewSnake.y}; net.camSet = true; }
   running = true;
-  draw(); updateHUD(); updateTimer();
+  draw(); updateHUD(); updateTimer(); updateSlotUI();
 }
 
 // Build a full standings list (every player + bots) for the result screen.
